@@ -15,6 +15,7 @@ from llm_axe import OnlineAgent, OllamaChat, PdfReader, DataExtractor
 from llm_axe.core import read_website
 import urllib.parse
 import itertools
+from nicegui import ui
 
 client = Client(headers={'Authorization': f"Bearer {os.getenv('OLLAMA_API_KEY')}"})
 
@@ -28,10 +29,11 @@ def loading_animation():
         
     sys.stdout.write("\rLoading complete!      \n")
 
-Question = input("Ask a question:  ")
+Question = ""
 Voice_instruction = ("Said in an angry Scottish accent")
+resp_instruction = ("You are a helpful assistant who speaks like a scottish person. Give answers under 3 lines. Give a possible google search to find more information labelled as 'Google search'. If you do not know the answer, say 'I do not know' and give a possible google search to find more information labelled as 'Google search'")
 
-Voice_toggle = input("Do you want the answer to be spoken? (yes/no):  ")
+Voice_toggle = ""
 
 sr = 16000 
 
@@ -79,7 +81,7 @@ def respond(question, llm_instruction):
                 except json.JSONDecodeError:
                     print(f"\nFailed to parse line: {line}")
         print()
-        if Voice_toggle.lower() == "yes":
+        if Voice_toggle == True:
             print("Starting TTS generation...")
             start = time.time()
             wavs, sr = TTSmodel.generate_voice_clone(
@@ -102,14 +104,32 @@ def respond(question, llm_instruction):
 
     return full_reply
 
-full_reply = respond(
-    Question,
-    ' You are a helpful assistant who speaks like a scottish person. Give answers under 3 lines. Give a possible google search to find more information labelled as "Google search". If you do not know the answer, say "I do not know" and give a possible google search to find more information labelled as "Google search"'
-)
+start_response = False
+
+Next_steps = ""
+
+def generate_ui():
+    ui.label("Ask a question to the voice assistant:")
+    question_input = ui.input(placeholder="Type your question here...").props('autofocus')
+    voice_toggle_button = ui.checkbox("Do you want the answer to be spoken?").bind_value(globals(), 'Voice_toggle')           
+    submit_button_button = ui.button("Submit", on_click=lambda: submit_question(question_input))
+    output = ui.label("")
+    
+
+def submit_question(question_input):
+        global start_response
+        start_response = True
+        Question = question_input.value
+generate_ui()
+ui.run()
+if start_response == True:
+    print(f"User question: {globals()['Question']}")
+    respond(globals()['Question'], globals()['resp_instruction'])
+
+    output = ui.label(globals()['Full_reply'])
+    ui.update()
 
 print("Offline response complete")
-
-Next_steps = input("Do you want to search Google for more information? (yes/no):  ")
 
 def google_search(query):
     search_question = de.ask(query, "find the best possible google search to find more information about this question")
@@ -121,11 +141,10 @@ def google_search(query):
     else:
         print("No results found.")
     
-
-if Next_steps.lower() == "yes":
+if Next_steps:
     print("Performing Google search...")
     start_time = time.time()
-    google_results_text = google_search(full_reply)
+    google_results_text = google_search(globals()['full_reply'])
     end_time = time.time()
     print(f"Google search completed in {end_time - start_time:.2f} seconds.")
 else:
