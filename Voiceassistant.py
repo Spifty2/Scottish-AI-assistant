@@ -29,6 +29,20 @@ def loading_animation():
         
     sys.stdout.write("\rLoading complete!      \n")
 
+def show_loading_animation():
+    spinner = itertools.cycle(['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'])
+    for frame in spinner:
+        if not globals().get('still_loading', True):
+            break
+        terminal_message = f"Generating response... {frame}"
+        sys.stdout.write(f"\r{terminal_message}")
+        sys.stdout.flush()
+        globals()['output_label'].set_text(terminal_message)
+        ui.update()
+        time.sleep(0.1)
+    sys.stdout.write("\r" + " " * 50 + "\r")
+    sys.stdout.flush()
+
 Question = ""
 Voice_instruction = ("Said in an angry Scottish accent")
 resp_instruction = ("You are a helpful assistant who speaks like a scottish person. Give answers under 3 lines. Give a possible google search to find more information labelled as 'Google search'. If you do not know the answer, say 'I do not know' and give a possible google search to find more information labelled as 'Google search'")
@@ -51,7 +65,9 @@ de = DataExtractor(llm)
 data, sr = sf.read("C:\\Users\\carol\\Downloads\\cry.wav", always_2d=False)
 sf.write("C:\\Users\\carol\\Downloads\\cry_fixed.wav", data, sr)
 
-def respond(question, llm_instruction):
+def respond(question, llm_instruction, Voice_toggle):
+    print(f"Generating response for question: {question}")
+    
     payload = {
         "model": "gemma4", 
         "messages": [
@@ -68,11 +84,11 @@ def respond(question, llm_instruction):
             if line:
                 try:
                     json_data = json.loads(line)
-
                     if "message" in json_data and "content" in json_data["message"]:
                         chunk = json_data["message"]["content"]
                         print(chunk, end="")
                         full_reply += chunk
+                        globals()['output_label'].set_text(full_reply)
 
                     if json_data.get("done"):
                         print("\nStreaming complete.")
@@ -102,37 +118,39 @@ def respond(question, llm_instruction):
         print(f"Error: {response_short.status_code}")
         print(response_short.text)
 
+    globals()['Full_reply'] = full_reply
+    globals()['finished_offline_resp'] = True
     return full_reply
 
-start_response = False
 
-Next_steps = ""
+finished_offline_resp = False
+Next_steps = False
 
-def generate_ui():
-    ui.label("Ask a question to the voice assistant:")
-    question_input = ui.input(placeholder="Type your question here...").props('autofocus')
-    voice_toggle_button = ui.checkbox("Do you want the answer to be spoken?").bind_value(globals(), 'Voice_toggle')           
-    submit_button_button = ui.button("Submit", on_click=lambda: submit_question(question_input))
-    output = ui.label("")
-    
+def submit_question(question_input, Voice_toggle, Next_steps):
+    Question = question_input
+    globals()['Question'] = Question
+    globals()['submitted_question_label'].set_text(f"Submitted question: {Question}")
 
-def submit_question(question_input):
-        global start_response
-        start_response = True
-        Question = question_input.value
-generate_ui()
-ui.run()
-if start_response == True:
-    print(f"User question: {globals()['Question']}")
-    respond(globals()['Question'], globals()['resp_instruction'])
-
-    output = ui.label(globals()['Full_reply'])
-    ui.update()
-
-print("Offline response complete")
+    print(f"User question: {Question}")
+    print("Response generation in progress...")
+    respond(question=Question, llm_instruction = globals()['resp_instruction'], Voice_toggle=Voice_toggle)
+    if globals()['finished_offline_resp']:
+        globals()['output_label'].set_text(globals()['Full_reply'])
+        print("Response generation completed.")
+        if Next_steps:
+            google_search(globals()['Question'])
 
 def google_search(query):
-    search_question = de.ask(query, "find the best possible google search to find more information about this question")
+    print("Performing Google search")
+    if not os.getenv("OLLAMA_API_KEY"):
+        print("No API key found.")
+        return
+
+    search_question = searcher.get_search_query(query)
+    if not search_question:
+        print("Could not generate a search query.")
+        return
+
     response_web = client.web_search(search_question)
     if response_web:
         print("\nGoogle search results:")
@@ -140,13 +158,15 @@ def google_search(query):
             print(f"{idx}. {result.title}: {result.url}")
     else:
         print("No results found.")
-    
-if Next_steps:
-    print("Performing Google search...")
-    start_time = time.time()
-    google_results_text = google_search(globals()['full_reply'])
-    end_time = time.time()
-    print(f"Google search completed in {end_time - start_time:.2f} seconds.")
-else:
-    print("No further Google search will be performed.")
 
+ui.label("Ask a question to the voice assistant:")
+question_input_box = ui.input(placeholder="Type your question here...",).props('autofocus')
+voice_toggle_button = ui.checkbox("Do you want the answer to be spoken?")
+google_search_checkbox = ui.checkbox("Do you want to perform a Google search for more information?")
+submit_button = ui.button("Submit", on_click=lambda: submit_question(question_input_box.value, voice_toggle_button.value, google_search_checkbox.value))
+submitted_question_label = ui.label("")
+output = ui.label("")
+globals()['output_label'] = output
+globals()['submitted_question_label'] = submitted_question_label
+ui.label("Voice assistant is running. You can ask questions and get responses.").style("font-size: 16px; color: green;")
+ui.run()
