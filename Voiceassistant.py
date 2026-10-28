@@ -1,6 +1,3 @@
-from pyexpat import model
-import ollama
-from ollama import Client
 import os
 import requests
 import json
@@ -11,13 +8,10 @@ import sounddevice as sd
 import sys
 import time
 import traceback
-from llm_axe import OnlineAgent, OllamaChat, PdfReader, DataExtractor
-from llm_axe.core import read_website
 import urllib.parse
 import itertools
 from nicegui import ui
 
-client = Client(headers={'Authorization': f"Bearer {os.getenv('OLLAMA_API_KEY')}"})
 
 def loading_animation():
     spinner = itertools.cycle(['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'])
@@ -58,15 +52,24 @@ TTSmodel = Qwen3TTSModel.from_pretrained(
 
 url = "http://localhost:11434/api/chat"
 
-llm = OllamaChat(model="gemma4")
-searcher = OnlineAgent(llm)
-de = DataExtractor(llm)
+soundfile_path = "C:\\Users\\carol\\Downloads\\cry.wav"
 
-data, sr = sf.read("C:\\Users\\carol\\Downloads\\cry.wav", always_2d=False)
-sf.write("C:\\Users\\carol\\Downloads\\cry_fixed.wav", data, sr)
+data, sr = sf.read(soundfile_path, always_2d=False)
+sf.write(soundfile_path, data, sr)
 
 def respond(question, llm_instruction, Voice_toggle):
     print(f"Generating response for question: {question}")
+
+    from pyexpat import model
+    import ollama
+    from ollama import Client
+    from llm_axe import OllamaChat, DataExtractor
+    from llm_axe.core import read_website
+
+    llm = OllamaChat(model="gemma4")
+    de = DataExtractor(llm)
+
+    client = Client(headers={'Authorization': f"Bearer {os.getenv('OLLAMA_API_KEY')}"})
     
     payload = {
         "model": "gemma4", 
@@ -102,7 +105,7 @@ def respond(question, llm_instruction, Voice_toggle):
             start = time.time()
             wavs, sr = TTSmodel.generate_voice_clone(
                 text=full_reply,
-                ref_audio="C:\\Users\\carol\\Downloads\\cry_fixed.wav",
+                ref_audio=soundfile_path,
                 ref_text="I promise you, when this is over you can cry all you want and I won't say a word.",
                 language="English",
             )
@@ -141,6 +144,12 @@ def submit_question(question_input, Voice_toggle, Next_steps):
             google_search(globals()['Question'])
 
 def google_search(query):
+
+    from llm_axe import OnlineAgent, OllamaChat
+
+    searcher = OnlineAgent(OllamaChat(model="gemma4"))
+
+
     print("Performing Google search")
     if not os.getenv("OLLAMA_API_KEY"):
         print("No API key found.")
@@ -151,7 +160,7 @@ def google_search(query):
         print("Could not generate a search query.")
         return
 
-    response_web = client.web_search(search_question)
+    response_web = searcher.web_search(search_question)
     if response_web:
         print("\nGoogle search results:")
         for idx, result in enumerate(response_web.results, start=1):
@@ -159,14 +168,31 @@ def google_search(query):
     else:
         print("No results found.")
 
-ui.label("Ask a question to the voice assistant:")
-question_input_box = ui.input(placeholder="Type your question here...",).props('autofocus')
-voice_toggle_button = ui.checkbox("Do you want the answer to be spoken?")
-google_search_checkbox = ui.checkbox("Do you want to perform a Google search for more information?")
-submit_button = ui.button("Submit", on_click=lambda: submit_question(question_input_box.value, voice_toggle_button.value, google_search_checkbox.value))
-submitted_question_label = ui.label("")
-output = ui.label("")
-globals()['output_label'] = output
-globals()['submitted_question_label'] = submitted_question_label
-ui.label("Voice assistant is running. You can ask questions and get responses.").style("font-size: 16px; color: green;")
+ui.label("Voice Assistant").style("font-size: 24px; font-weight: bold; color: blue;")
+ui.dark_mode()
+with ui.expansion("Settings"):
+    dark = ui.dark_mode()
+    ui.label('Switch mode:')
+    ui.button('Dark', on_click=dark.enable)
+    ui.button('Light', on_click=dark.disable)
+    soundfile_path_input = ui.input("Path to reference audio file:", value=soundfile_path)
+    soundfile_path_input.on('input', lambda e: globals().update({'soundfile_path': e.value}))
+    localhost_input = ui.input("Ollama API URL:", value=url)
+    localhost_input.on('input', lambda e: globals().update({'url': e.value}))
+ui.separator()
+with ui.column().classes('justify-center items-center'):
+    ui.label("Welcome to the Voice Assistant!").style("font-size: 18px; color: green;")
+    with ui.card().classes('fixed_centre'):
+        ui.label("Ask a question to the voice assistant:")
+        question_input_box = ui.input(placeholder="Type your question here...",).props('autofocus')
+        voice_toggle_button = ui.checkbox("Do you want the answer to be spoken?")
+        google_search_checkbox = ui.checkbox("Do you want to perform a Google search for more information?")
+        submit_button = ui.button("Submit", on_click=lambda: submit_question(question_input_box.value, voice_toggle_button.value, google_search_checkbox.value))
+        submitted_question_label = ui.label("")
+    with ui.card().classes('items-center'):
+        output = ui.label("")
+        globals()['output_label'] = output
+        globals()['submitted_question_label'] = submitted_question_label
+        ui.label("Voice assistant is running. You can ask questions and get responses.").style("font-size: 16px; color: green;")
 ui.run()
+
