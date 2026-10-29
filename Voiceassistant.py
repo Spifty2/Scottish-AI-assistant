@@ -1,5 +1,4 @@
 import os
-import asyncio
 from pathlib import Path
 import requests
 import json
@@ -15,32 +14,6 @@ try:
     import sounddevice as sd
 except ImportError:
     print("sounddevice module not found. Audio playback will be disabled.")
-
-
-def loading_animation():
-    spinner = itertools.cycle(['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'])
-    
-    for _ in range(50):
-        sys.stdout.write(f"\rLoading your data... {next(spinner)}")
-        sys.stdout.flush()
-        time.sleep(0.1)
-        
-    sys.stdout.write("\rLoading complete!      \n")
-
-def show_loading_animation():
-    spinner = itertools.cycle(['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'])
-    for frame in spinner:
-        if not globals().get('still_loading', True):
-            break
-        terminal_message = f"Generating response... {frame}"
-        sys.stdout.write(f"\r{terminal_message}")
-        sys.stdout.flush()
-        globals()['output_label'].set_text(terminal_message)
-        ui.update()
-        time.sleep(0.1)
-    sys.stdout.write("\r" + " " * 50 + "\r")
-    sys.stdout.flush()
-
 Question = ""
 Voice_instruction = ("Said in an angry Scottish accent")
 resp_instruction = ("You are a helpful assistant who speaks like a scottish person. Give answers under 3 lines. Give a possible google search to find more information labelled as 'Google search'. If you do not know the answer, say 'I do not know' and give a possible google search to find more information labelled as 'Google search'")
@@ -77,7 +50,6 @@ def respond(question, llm_instruction, Voice_toggle):
         ]
     }
     response_short = requests.post(url, json=payload, stream=True)
-    response_short.raise_for_status()
     full_reply = ""
 
     if response_short.status_code == 200:
@@ -90,6 +62,7 @@ def respond(question, llm_instruction, Voice_toggle):
                         chunk = json_data["message"]["content"]
                         print(chunk, end="")
                         full_reply += chunk
+                        globals()['output_label'].set_text(full_reply)
 
                     if json_data.get("done"):
                         print("\nStreaming complete.")
@@ -127,46 +100,19 @@ def respond(question, llm_instruction, Voice_toggle):
 finished_offline_resp = False
 Next_steps = False
 
-def generate_and_play_voice(text):
-    start = time.time()
-    wavs, sample_rate = TTSmodel.generate_voice_clone(
-        text=text,
-        ref_audio=soundfile_path,
-        ref_text="I promise you, when this is over you can cry all you want and I won't say a word.",
-        language="English",
-    )
-    audio_output = wavs[0].astype('float32')
-    sd.play(audio_output, sample_rate)
-    sd.wait()
-    print("Audio playback finished.")
-    print(f"Generation took {time.time() - start:.1f}s")
+def submit_question(question_input, Voice_toggle, Next_steps):
+    Question = question_input
+    globals()['Question'] = Question
+    globals()['submitted_question_label'].set_text(f"Submitted question: {Question}")
 
-
-async def submit_question(question_input, Voice_toggle, Next_steps):
-    question = question_input
-    globals()['Question'] = question
-    submitted_question_label.set_text(f"Submitted question: {question}")
-    output_label.set_text("Generating response...")
-
-    print(f"User question: {question}")
+    print(f"User question: {Question}")
     print("Response generation in progress...")
-    try:
-        full_reply = await asyncio.to_thread(
-            respond,
-            question,
-            resp_instruction,
-            False,
-        )
-        output_label.set_text(full_reply)
+    respond(question=Question, llm_instruction = globals()['resp_instruction'], Voice_toggle=Voice_toggle)
+    if globals()['finished_offline_resp']:
+        globals()['output_label'].set_text(globals()['Full_reply'])
         print("Response generation completed.")
-        if Voice_toggle:
-            await asyncio.to_thread(generate_and_play_voice, full_reply)
         if Next_steps:
-            await asyncio.to_thread(google_search, question)
-    except Exception as error:
-        print(f"Failed to generate a response: {error}")
-        traceback.print_exc()
-        output_label.set_text(f"Error generating response: {error}")
+            google_search(globals()['Question'])
 
 def google_search(query):
     try:
@@ -226,14 +172,7 @@ def main():
             question_input_box = ui.input(placeholder="Type your question here...",).props('autofocus')
             voice_toggle_button = ui.checkbox("Do you want the answer to be spoken?")
             google_search_checkbox = ui.checkbox("Do you want to perform a Google search for more information?")
-            async def handle_submit():
-                await submit_question(
-                    question_input_box.value,
-                    voice_toggle_button.value,
-                    google_search_checkbox.value,
-                )
-
-            ui.button("Submit", on_click=handle_submit)
+            ui.button("Submit", on_click=lambda: submit_question(question_input_box.value, voice_toggle_button.value, google_search_checkbox.value))
             submitted_question_label = ui.label("")
         with ui.card().classes('items-center'):
             output = ui.label("")
