@@ -1,21 +1,8 @@
-Requirements:
-
-Python 3.x environment
-
-Required Python packages:
-requests
-soundfile
-numpy
-qwen_tts
-sounddevice
-nicegui
-ollama
-llm_axe
-A working local Ollama server at:
-http://localhost:11434/api/chat
-
-An Ollama model available, specifically:
-gemma4
-
-A text-to-speech model available from Qwen:
-Qwen/Qwen3-TTS-12Hz-0.6B-Base
+llm-axe==1.1.9
+nicegui==3.16.0
+numpy==2.4.6
+ollama==0.6.2
+qwen-tts==0.1.1
+requests==2.34.2
+sounddevice==0.5.5
+soundfile==0.14.0

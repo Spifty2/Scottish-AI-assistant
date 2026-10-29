@@ -1,16 +1,20 @@
 import os
+import asyncio
+from pathlib import Path
 import requests
 import json
 import soundfile as sf
 import numpy as np
 from qwen_tts import Qwen3TTSModel
-import sounddevice as sd
 import sys
 import time
 import traceback
-import urllib.parse
 import itertools
 from nicegui import ui
+try:
+    import sounddevice as sd
+except ImportError:
+    print("sounddevice module not found. Audio playback will be disabled.")
 
 
 def loading_animation():
@@ -43,19 +47,13 @@ resp_instruction = ("You are a helpful assistant who speaks like a scottish pers
 
 Voice_toggle = ""
 
-sr = 16000 
+url = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/chat")
 
-TTSmodel = Qwen3TTSModel.from_pretrained(
-    "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-    device_map="auto",
+project_audio_path = Path(__file__).resolve().parent / "assets" / "Sean_Connery.wav"
+downloads_audio_path = Path.home() / "Downloads" / "cry.wav"
+soundfile_path = str(
+    downloads_audio_path if downloads_audio_path.is_file() else project_audio_path
 )
-
-url = "http://localhost:11434/api/chat"
-
-soundfile_path = "C:\\Users\\carol\\Downloads\\cry.wav"
-
-data, sr = sf.read(soundfile_path, always_2d=False)
-sf.write(soundfile_path, data, sr)
 
 def respond(question, llm_instruction, Voice_toggle):
     print(f"Generating response for question: {question}")
@@ -79,6 +77,7 @@ def respond(question, llm_instruction, Voice_toggle):
         ]
     }
     response_short = requests.post(url, json=payload, stream=True)
+    response_short.raise_for_status()
     full_reply = ""
 
     if response_short.status_code == 200:
@@ -91,7 +90,6 @@ def respond(question, llm_instruction, Voice_toggle):
                         chunk = json_data["message"]["content"]
                         print(chunk, end="")
                         full_reply += chunk
-                        globals()['output_label'].set_text(full_reply)
 
                     if json_data.get("done"):
                         print("\nStreaming complete.")
@@ -129,70 +127,128 @@ def respond(question, llm_instruction, Voice_toggle):
 finished_offline_resp = False
 Next_steps = False
 
-def submit_question(question_input, Voice_toggle, Next_steps):
-    Question = question_input
-    globals()['Question'] = Question
-    globals()['submitted_question_label'].set_text(f"Submitted question: {Question}")
+def generate_and_play_voice(text):
+    start = time.time()
+    wavs, sample_rate = TTSmodel.generate_voice_clone(
+        text=text,
+        ref_audio=soundfile_path,
+        ref_text="I promise you, when this is over you can cry all you want and I won't say a word.",
+        language="English",
+    )
+    audio_output = wavs[0].astype('float32')
+    sd.play(audio_output, sample_rate)
+    sd.wait()
+    print("Audio playback finished.")
+    print(f"Generation took {time.time() - start:.1f}s")
 
-    print(f"User question: {Question}")
+
+async def submit_question(question_input, Voice_toggle, Next_steps):
+    question = question_input
+    globals()['Question'] = question
+    submitted_question_label.set_text(f"Submitted question: {question}")
+    output_label.set_text("Generating response...")
+
+    print(f"User question: {question}")
     print("Response generation in progress...")
-    respond(question=Question, llm_instruction = globals()['resp_instruction'], Voice_toggle=Voice_toggle)
-    if globals()['finished_offline_resp']:
-        globals()['output_label'].set_text(globals()['Full_reply'])
+    try:
+        full_reply = await asyncio.to_thread(
+            respond,
+            question,
+            resp_instruction,
+            False,
+        )
+        output_label.set_text(full_reply)
         print("Response generation completed.")
+        if Voice_toggle:
+            await asyncio.to_thread(generate_and_play_voice, full_reply)
         if Next_steps:
-            google_search(globals()['Question'])
+            await asyncio.to_thread(google_search, question)
+    except Exception as error:
+        print(f"Failed to generate a response: {error}")
+        traceback.print_exc()
+        output_label.set_text(f"Error generating response: {error}")
 
 def google_search(query):
+    try:
+        from llm_axe import OnlineAgent, OllamaChat
 
-    from llm_axe import OnlineAgent, OllamaChat
-
-    searcher = OnlineAgent(OllamaChat(model="gemma4"))
+        searcher = OnlineAgent(OllamaChat(model="gemma4"))
 
 
-    print("Performing Google search")
-    if not os.getenv("OLLAMA_API_KEY"):
-        print("No API key found.")
-        return
+        print("Performing Google search")
+        if not os.getenv("OLLAMA_API_KEY"):
+            print("No API key found. Set the OLLAMA_API_KEY environment variable to perform Google searches.")
+            return
 
-    search_question = searcher.get_search_query(query)
-    if not search_question:
-        print("Could not generate a search query.")
-        return
+        search_question = searcher.get_search_query(query)
+        if not search_question:
+            print("Could not generate a search query.")
+            return
 
-    response_web = searcher.web_search(search_question)
-    if response_web:
-        print("\nGoogle search results:")
-        for idx, result in enumerate(response_web.results, start=1):
-            print(f"{idx}. {result.title}: {result.url}")
-    else:
-        print("No results found.")
+        response_web = searcher.web_search(search_question)
+        if response_web:
+            print("\nGoogle search results:")
+            for idx, result in enumerate(response_web.results, start=1):
+                print(f"{idx}. {result.title}: {result.url}")
+        else:
+            print("No results found.")
 
-ui.label("Voice Assistant").style("font-size: 24px; font-weight: bold; color: blue;")
-ui.dark_mode()
-with ui.expansion("Settings"):
-    dark = ui.dark_mode()
-    ui.label('Switch mode:')
-    ui.button('Dark', on_click=dark.enable)
-    ui.button('Light', on_click=dark.disable)
-    soundfile_path_input = ui.input("Path to reference audio file:", value=soundfile_path)
-    soundfile_path_input.on('input', lambda e: globals().update({'soundfile_path': e.value}))
-    localhost_input = ui.input("Ollama API URL:", value=url)
-    localhost_input.on('input', lambda e: globals().update({'url': e.value}))
-ui.separator()
-with ui.column().classes('justify-center items-center'):
-    ui.label("Welcome to the Voice Assistant!").style("font-size: 18px; color: green;")
-    with ui.card().classes('fixed_centre'):
-        ui.label("Ask a question to the voice assistant:")
-        question_input_box = ui.input(placeholder="Type your question here...",).props('autofocus')
-        voice_toggle_button = ui.checkbox("Do you want the answer to be spoken?")
-        google_search_checkbox = ui.checkbox("Do you want to perform a Google search for more information?")
-        submit_button = ui.button("Submit", on_click=lambda: submit_question(question_input_box.value, voice_toggle_button.value, google_search_checkbox.value))
-        submitted_question_label = ui.label("")
-    with ui.card().classes('items-center'):
-        output = ui.label("")
-        globals()['output_label'] = output
-        globals()['submitted_question_label'] = submitted_question_label
-        ui.label("Voice assistant is running. You can ask questions and get responses.").style("font-size: 16px; color: green;")
-ui.run()
+    except Exception as e:
+        print(f"An error occurred during the Google search: {e}")
+        traceback.print_exc()
 
+def main():
+    global TTSmodel
+
+    TTSmodel = Qwen3TTSModel.from_pretrained(
+        "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+        device_map="auto",
+    )
+
+    sf.info(soundfile_path)
+
+    ui.label("Voice Assistant").style("font-size: 24px; font-weight: bold; color: blue;")
+    ui.dark_mode()
+    with ui.expansion("Settings"):
+        dark = ui.dark_mode()
+        ui.label('Switch mode:')
+        ui.button('Dark', on_click=dark.enable)
+        ui.button('Light', on_click=dark.disable)
+        soundfile_path_input = ui.input("Path to reference audio file:", value=soundfile_path)
+        soundfile_path_input.on('input', lambda e: globals().update({'soundfile_path': e.value}))
+        localhost_input = ui.input("Ollama API URL:", value=url)
+        localhost_input.on('input', lambda e: globals().update({'url': e.value}))
+    ui.separator()
+    with ui.column().classes('justify-center items-center'):
+        ui.label("Welcome to the Voice Assistant!").style("font-size: 18px; color: green;")
+        with ui.card().classes('fixed_centre'):
+            ui.label("Ask a question to the voice assistant:")
+            question_input_box = ui.input(placeholder="Type your question here...",).props('autofocus')
+            voice_toggle_button = ui.checkbox("Do you want the answer to be spoken?")
+            google_search_checkbox = ui.checkbox("Do you want to perform a Google search for more information?")
+            async def handle_submit():
+                await submit_question(
+                    question_input_box.value,
+                    voice_toggle_button.value,
+                    google_search_checkbox.value,
+                )
+
+            ui.button("Submit", on_click=handle_submit)
+            submitted_question_label = ui.label("")
+        with ui.card().classes('items-center'):
+            output = ui.label("")
+            globals()['output_label'] = output
+            globals()['submitted_question_label'] = submitted_question_label
+            ui.label("Voice assistant is running. You can ask questions and get responses.").style("font-size: 16px; color: green;")
+
+    ui.run(
+        host="0.0.0.0",
+        port=8080,
+        reload=False,
+        show=False,
+        storage_secret=os.environ.get("STORAGE_SECRET", "change-me"),
+    )
+
+
+if __name__ == "__main__":
+    main()
